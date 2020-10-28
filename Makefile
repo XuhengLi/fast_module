@@ -5,3 +5,5 @@ clean:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) clean
 install:
 	insmod fast_module.ko
+uninstall:
+	rmmod fast_module
