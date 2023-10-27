@@ -5,24 +5,62 @@
 #include <linux/cdev.h>
 #include <linux/device.h>
 #include <linux/mm.h>
+
 #include <asm/io.h>
 
+//#include <asm/kvm_host.h>
+#include <kvm/shmem_guest.h>
 
+struct vm_area_struct* shmem_vma;
+unsigned long shmem_size;
+
+
+
+
+DEFINE_MUTEX(sekvm_shmem_mutex);
 static int sekvm_shmem_open(struct inode *inode, struct file *file)
 {
+	if(mutex_trylock(&sekvm_shmem_mutex) == 0) {
+		printk(KERN_ERR "sekvm_shmem is already mapped. Aborting mmap\n");
+		return -EBUSY;
+	}
+
 	printk(KERN_ERR "sekvm_shmem file opened.\n");
 	return 0;
 }
 
 static int sekvm_shmem_close(struct inode *inode, struct file *file)
 {
+
+	//vm_munmap(shmem_vma->vm_start, shmem_size);
+	mutex_unlock(&sekvm_shmem_mutex);
+	
 	printk(KERN_ERR "sekvm_shmem file closed.\n");
 	return 0;
 }
 
 static int sekvm_shmem_mmap(struct file *filp, struct vm_area_struct *vma)
 {
-	printk(KERN_ERR "sekvm_shmem file mmaped.\n");
+	unsigned long size = vma->vm_end - vma->vm_start;
+	u64 base_phys = get_shmem_base();
+	int ret;
+	shmem_vma = vma;
+	shmem_size = size;
+	
+	printk(KERN_ERR "[SeKVM_KM] sekvm_shmem_mmap size = %lu\n", size);
+	printk(KERN_ERR "[SeKVM_KM] sekvm_shmem_mmap base = %llu\n", base_phys);
+	if(size < get_registered_size())
+	{
+		printk(KERN_ERR "[SeKVM_KM] Not enough shared memory. Aborting mmap\n");
+		return -1;
+	}
+	ret = remap_pfn_range(vma, vma->vm_start, __phys_to_pfn(base_phys), size, vma->vm_page_prot);
+	if(ret < 0)
+	{
+		printk(KERN_ERR "[SeKVM_KM] mmap failed\n");
+		return -1;
+	}
+	printk(KERN_ERR "[SeKVM_KM] sekvm_shmem file mmaped.\n");
 	return 0;
 }
 
@@ -38,8 +76,16 @@ dev_t dev = 0;
 static struct class *dev_class;
 static struct cdev sekvm_shmem_cdev;
 
+
 static int __init lkm_example_init(void)
 {
+	u64 registered_size = get_registered_size();
+	printk(KERN_INFO "[SeKVM_KM] registered size = %llu\n", registered_size);
+	// We register memory in kernel init so nothing to be done here 
+	//printk(KERN_INFO "[SeKVM_Guest] HVC_GET_SHMEM_SIZE = %llu\n", shmem_size);
+	//void* base = alloc_shmem_guest(shmem_size);
+	//printk(KERN_INFO "[SeKVM_Guest] Read the first byte of the shared memory = %d\n", *(int*)base);
+
 	/* Allocating Major number */
 	if ((alloc_chrdev_region(&dev, 0, 1, "sekvm_shmem")) < 0) {
 		printk(KERN_INFO "sekvm_shmem_test: Cannot allocate major number.\n");
